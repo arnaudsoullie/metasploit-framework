@@ -37,7 +37,7 @@ class Metasploit3 < Msf::Auxiliary
         Opt::RPORT(502),
         OptInt.new('DATA', [false, "Data to write (WRITE_COIL and WRITE_REGISTER modes only)"]),
         OptInt.new('DATA_ADDRESS', [true, "Modbus data address"]),
-        OptInt.new('UNIT_NUMBER', [false, "Modbus unit number", 1]),
+        OptInt.new('UNIT_NUMBER', [false, "Modbus unit number", 1])
       ], self.class)
 
   end

